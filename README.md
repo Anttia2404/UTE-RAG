@@ -47,6 +47,8 @@ Các trích dẫn mở trang đọc tài liệu đã render Markdown trong app �
 
 ## Chunk và embedding tài liệu
 
+Lịch sử hội thoại được lưu trong `localStorage` của trình duyệt hiện tại. Người dùng có thể tìm trong câu hỏi và câu trả lời, mở lại hoặc xóa từng cuộc trò chuyện. Dữ liệu không đồng bộ giữa các thiết bị.
+
 Bốn file Markdown ở thư mục gốc là nguồn dữ liệu gốc. Chúng được chia thành các đoạn khoảng 1.100 ký tự với 160 ký tự chồng lấn. Chạy lệnh sau để đồng bộ bản hiển thị, chia chunk và tạo lại embedding sau khi sửa tài liệu:
 
 ```powershell
