@@ -43,6 +43,7 @@ Không đặt key vào biến `VITE_*` hay mã React. Backend truy hồi 5 chunk
 `GET /api/health` cho biết backend đang chạy và đã thấy API key chưa. Node truy hồi các vector hiện có, còn Python gọi Gemini SDK trực tiếp. Google đã đánh dấu `google-generativeai` là SDK legacy và khuyến nghị [google-genai](https://ai.google.dev/gemini-api/docs/libraries); project đang giữ package bạn yêu cầu.
 
 Danh mục nguồn nằm trong `src/sources.js`; các bản Markdown được phục vụ từ `public/sources/`.
+Các trích dẫn mở trang đọc tài liệu đã render Markdown trong app để giữ dấu tiếng Việt, bảng và danh sách dễ đọc.
 
 ## Chunk và embedding tài liệu
 

@@ -373,3 +373,40 @@ svg { display: block; }
   .icon-button { width: 44px; height: 44px; }
   .answer-actions { gap: 4px; }
 }
+
+.source-page { min-height: 100vh; background: var(--surface); }
+.source-header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border-strong); background: var(--surface); }
+.source-back { display: inline-flex; min-height: 40px; align-items: center; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--foreground); font-size: 13px; text-decoration: none; }
+.source-back:hover { background: var(--button-hover-page); }
+.source-reader { width: min(100% - 40px, 840px); margin: 0 auto; padding: 42px 0 80px; }
+.source-reader-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+.source-reader-meta svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.source-reader h1 { margin: 0 0 30px; color: var(--foreground); font-size: clamp(24px, 4vw, 34px); font-weight: 600; line-height: 1.25; letter-spacing: -.025em; }
+.source-reader-status { color: var(--muted); }
+.markdown-document { color: var(--foreground); font-size: 16px; line-height: 1.75; overflow-wrap: anywhere; }
+.markdown-document h1 { margin: 1.8em 0 .6em; font-size: 1.7em; letter-spacing: -.02em; }
+.markdown-document h2 { margin: 1.8em 0 .55em; padding-bottom: .35em; border-bottom: 1px solid var(--border-strong); font-size: 1.35em; line-height: 1.35; }
+.markdown-document h3 { margin: 1.55em 0 .45em; font-size: 1.12em; line-height: 1.4; }
+.markdown-document h4, .markdown-document h5, .markdown-document h6 { margin: 1.4em 0 .4em; font-size: 1em; }
+.markdown-document p { margin: 0 0 1em; }
+.markdown-document ul, .markdown-document ol { margin: .4em 0 1.1em; padding-left: 1.5em; }
+.markdown-document li { margin: .25em 0; padding-left: .15em; }
+.markdown-table-scroll { max-width: 100%; margin: 1.25em 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.markdown-document table { width: max-content; min-width: 100%; margin: 0; border-collapse: collapse; font-size: 14px; line-height: 1.55; }
+.markdown-document th, .markdown-document td { min-width: 110px; padding: 9px 11px; border: 1px solid var(--border-strong); text-align: left; vertical-align: top; }
+.markdown-document th { background: var(--background); font-weight: 600; }
+.markdown-document blockquote { margin: 1em 0; padding: 2px 0 2px 16px; border-left: 3px solid var(--border-strong); color: var(--muted); }
+.markdown-document a { color: var(--primary); text-underline-offset: 3px; }
+.markdown-document hr { margin: 2em 0; border: 0; border-top: 1px solid var(--border-strong); }
+.markdown-document code { padding: .12em .35em; border-radius: 5px; background: var(--background); font-size: .9em; }
+.markdown-document pre { overflow-x: auto; padding: 14px; border-radius: 10px; background: var(--background); }
+.markdown-document pre code { padding: 0; background: transparent; }
+
+@media (max-width: 680px) {
+  .source-header { min-height: 56px; padding: 0 14px; }
+  .source-back { min-height: 40px; padding: 0 10px; }
+  .source-reader { width: min(100% - 32px, 840px); padding: 28px 0 56px; }
+  .source-reader h1 { margin-bottom: 24px; }
+  .markdown-document { font-size: 15px; line-height: 1.7; }
+  .markdown-document table { font-size: 13px; }
+}

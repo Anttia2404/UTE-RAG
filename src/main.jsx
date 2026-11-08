@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { requestAssistantReply } from './chat-api.js';
 import { sampleConversation, sources, starterQuestions } from './sources.js';
 import './styles.css';
@@ -21,7 +23,7 @@ function Icon({ name, className = '' }) {
 function Citation({ citation }) {
   const source = sources[citation.sourceId];
   if (!source) return null;
-  return <a className="source-citation" href={source.href} target="_blank" rel="noreferrer">
+  return <a className="source-citation" href={`/?source=${encodeURIComponent(source.id)}`} target="_blank" rel="noreferrer">
     <Icon name="document" /><span>{citation.label || source.label}</span><Icon name="external" className="external-icon" />
   </a>;
 }
@@ -166,4 +168,54 @@ function App() {
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+function SourceReader({ sourceId }) {
+  const source = sources[sourceId];
+  const [state, setState] = useState({ status: 'loading', html: '' });
+
+  useEffect(() => {
+    let active = true;
+    fetch(source.href)
+      .then((response) => {
+        if (!response.ok) throw new Error('Không tải được tài liệu nguồn.');
+        return response.text();
+      })
+      .then((markdown) => {
+        const rendered = marked.parse(markdown, { gfm: true, breaks: false });
+        const safeHtml = DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } });
+        const documentFragment = document.createElement('template');
+        documentFragment.innerHTML = safeHtml;
+        documentFragment.content.querySelectorAll('table').forEach((table) => {
+          const scroller = document.createElement('div');
+          scroller.className = 'markdown-table-scroll';
+          table.replaceWith(scroller);
+          scroller.append(table);
+        });
+        if (active) setState({ status: 'ready', html: DOMPurify.sanitize(documentFragment.innerHTML, { USE_PROFILES: { html: true } }) });
+      })
+      .catch(() => {
+        if (active) setState({ status: 'error', html: '' });
+      });
+    return () => { active = false; };
+  }, [source.href]);
+
+  return <div className="source-page">
+    <header className="source-header">
+      <a className="brand" href="/" aria-label="Quay lại Trợ lý học phí"><span className="brand-mark"><Icon name="brand" /></span><span>Trợ lý học phí</span></a>
+      <a className="source-back" href="/">Về cuộc trò chuyện</a>
+    </header>
+    <main className="source-reader">
+      <div className="source-reader-meta"><Icon name="document" /><span>{source.label}</span></div>
+      <h1>{source.title}</h1>
+      {state.status === 'loading' && <p className="source-reader-status" role="status">Đang mở tài liệu…</p>}
+      {state.status === 'error' && <p className="source-reader-status" role="alert">Không tải được tài liệu. Hãy thử mở lại từ trích dẫn.</p>}
+      {state.status === 'ready' && <article className="markdown-document" dangerouslySetInnerHTML={{ __html: state.html }} />}
+    </main>
+  </div>;
+}
+
+function Root() {
+  const sourceId = new URLSearchParams(location.search).get('source');
+  return sourceId && sources[sourceId] ? <SourceReader sourceId={sourceId} /> : <App />;
+}
+
+createRoot(document.getElementById('root')).render(<React.StrictMode><Root /></React.StrictMode>);
