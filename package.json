@@ -1,0 +1,23 @@
+{
+  "name": "tro-ly-hoc-phi",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "api": "python server/google_api.py",
+    "dev:full": "concurrently -k -n api,vite -c blue,green \"npm:api\" \"npm:dev\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "kb:build": "node scripts/build-kb.mjs",
+    "kb:search": "node scripts/search-kb.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest",
+    "concurrently": "^9.2.1"
+  }
+}
