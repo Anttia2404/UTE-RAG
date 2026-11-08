@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "api": "python server/google_api.py",
+    "api": "python -m server.app",
     "dev:full": "concurrently -k -n api,vite -c blue,green \"npm:api\" \"npm:dev\"",
     "build": "vite build",
     "preview": "vite preview",

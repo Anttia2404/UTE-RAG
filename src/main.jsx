@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { requestAssistantReply } from './chat-api.js';
+import { api, requestAssistantReply } from './chat-api.js';
 import { sampleConversation, sources, starterQuestions } from './sources.js';
 import './styles.css';
 
@@ -81,9 +80,14 @@ function historyGroupLabel(updatedAt) {
 
 function Citation({ citation }) {
   const source = sources[citation.sourceId];
-  if (!source) return null;
-  return <a className="source-citation" href={`/?source=${encodeURIComponent(source.id)}`} target="_blank" rel="noreferrer">
-    <Icon name="document" /><span>{citation.label || source.label}</span><Icon name="external" className="external-icon" />
+  const href = source
+    ? `/?source=${encodeURIComponent(source.id)}`
+    : citation.documentId || citation.sourceId
+      ? `/?document=${encodeURIComponent(citation.documentId || citation.sourceId)}`
+      : citation.href || null;
+  if (!href) return null;
+  return <a className="source-citation" href={href} target="_blank" rel="noreferrer">
+    <Icon name="document" /><span>{citation.label || source?.label || 'Tài liệu nguồn'}</span><Icon name="external" className="external-icon" />
   </a>;
 }
 
@@ -106,7 +110,7 @@ function AnswerActions({ onCopy, onRegenerate, latest }) {
   </div>;
 }
 
-function AssistantAnswer({ message, index, latest, onRetry, onRegenerate }) {
+function AssistantAnswer({ message, index, latest, onRetry, onRegenerate, onFeedback }) {
   if (message.status === 'error') return <div className="assistant-error" role="alert">
     <strong>Trợ lý chưa trả lời được</strong><p>{message.reason}</p>
     <button className="outline-button retry-button" type="button" onClick={onRetry}>Thử lại</button>
@@ -116,6 +120,7 @@ function AssistantAnswer({ message, index, latest, onRetry, onRegenerate }) {
     <div className="answer-copy">{(message.content || '').split(/\n\s*\n/).filter(Boolean).map((paragraph, i) => <p key={i}><AnswerText text={paragraph} /></p>)}</div>
     {!!message.citations?.length && <div className="citation-list">{message.citations.map((citation, i) => <Citation citation={citation} key={`${citation.sourceId}-${i}`} />)}</div>}
     <AnswerActions latest={latest} onCopy={() => navigator.clipboard?.writeText(message.content || '')} onRegenerate={onRegenerate} data-index={index} />
+    {message.id && <div className="feedback-actions" aria-label="Đánh giá câu trả lời"><span>Hữu ích?</span><button type="button" onClick={() => onFeedback(message.id, 'helpful')}>Có</button><button type="button" onClick={() => onFeedback(message.id, 'not_helpful')}>Chưa</button></div>}
     {latest && !!message.suggestions?.length && <div className="follow-up-list"><p className="section-label">Hỏi tiếp</p>{message.suggestions.map((question) => <button className="suggestion-button" type="button" key={question} onClick={() => onRegenerate(question)}>{question}</button>)}</div>}
   </div>;
 }
@@ -126,6 +131,7 @@ function App() {
   const [activeConversationId, setActiveConversationId] = useState(initialChatState.activeId);
   const activeConversationIdRef = useRef(initialChatState.activeId);
   const [messages, setMessages] = useState(initialChatState.messages);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [pending, setPending] = useState(false);
   const [input, setInput] = useState('');
   const [historyQuery, setHistoryQuery] = useState('');
@@ -135,12 +141,22 @@ function App() {
   const inputRef = useRef(null);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(conversations));
-    } catch {
-      // Keep the current chat usable if browser storage is unavailable or full.
-    }
-  }, [conversations]);
+    if (new URLSearchParams(location.search).get('demo') === '1') { setHistoryLoaded(true); return; }
+    let active = true;
+    api('/api/chats').then(async (items) => {
+      if (!active) return;
+      setConversations(items.map((item) => ({ ...item, messages: [] })));
+      const first = items[0];
+      if (first) {
+        const detail = await api(`/api/chats/${encodeURIComponent(first.id)}`);
+        if (!active) return;
+        activeConversationIdRef.current = detail.id;
+        setActiveConversationId(detail.id);
+        setMessages(detail.messages || []);
+      }
+    }).catch(() => {}).finally(() => { if (active) setHistoryLoaded(true); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
@@ -160,11 +176,15 @@ function App() {
     });
   };
 
-  const activateConversation = (conversation) => {
+  const activateConversation = async (conversation) => {
     if (pending) return;
     activeConversationIdRef.current = conversation.id;
     setActiveConversationId(conversation.id);
-    setMessages(conversation.messages);
+    setMessages(conversation.messages || []);
+    try {
+      const detail = await api(`/api/chats/${encodeURIComponent(conversation.id)}`);
+      if (activeConversationIdRef.current === conversation.id) setMessages(detail.messages || []);
+    } catch (error) { setMessages([{ role: 'assistant', status: 'error', reason: error.message }]); }
     setHistoryOpen(false);
   };
 
@@ -178,9 +198,11 @@ function App() {
     inputRef.current?.focus();
   };
 
-  const deleteConversation = (event, conversation) => {
+  const deleteConversation = async (event, conversation) => {
     event.stopPropagation();
     if (pending || !window.confirm(`Xóa cuộc trò chuyện “${conversation.title}” khỏi lịch sử?`)) return;
+    try { await api(`/api/chats/${encodeURIComponent(conversation.id)}`, { method: 'DELETE' }); }
+    catch (error) { window.alert(error.message); return; }
     setConversations((current) => current.filter((item) => item.id !== conversation.id));
     if (activeConversationIdRef.current === conversation.id) {
       activeConversationIdRef.current = null;
@@ -201,18 +223,23 @@ function App() {
     try {
       const result = await requestAssistantReply({
         messages: base,
-        sourceIds: Object.keys(sources),
         signal: abortRef.current.signal,
+        sessionId: conversationId,
       });
-      const completed = [...base, { role: 'assistant', content: result.answer, citations: result.citations || [], suggestions: result.suggestions || [] }];
+      const serverId = result.sessionId || conversationId;
+      activeConversationIdRef.current = serverId;
+      setActiveConversationId(serverId);
+      const completed = [...base, { role: 'assistant', id: result.messageId, content: result.answer, citations: result.citations || [], suggestions: result.suggestions || [] }];
       setMessages(completed);
-      if (conversationId) saveConversation(conversationId, completed);
+      if (serverId) saveConversation(serverId, completed);
+      api('/api/chats').then((items) => setConversations(items.map((item) => ({ ...item, messages: [] })))).catch(() => {});
     } catch (error) {
       const failed = error.name === 'AbortError'
         ? [...base, { role: 'assistant', content: 'Đã dừng giữa chừng.' }]
         : [...base, { role: 'assistant', status: 'error', reason: error.message || 'Backend không xử lý được yêu cầu.' }];
       setMessages(failed);
-      if (conversationId) saveConversation(conversationId, failed);
+      const serverId = error.sessionId || conversationId;
+      if (serverId) { activeConversationIdRef.current = serverId; setActiveConversationId(serverId); saveConversation(serverId, failed); }
     } finally {
       abortRef.current = null;
       setPending(false);
@@ -223,11 +250,11 @@ function App() {
     const content = question.trim();
     if (!content || pending) return;
     const history = [...messages.filter((message) => !(message.role === 'assistant' && message.status === 'error')), { role: 'user', content }];
-    const conversationId = activeConversationIdRef.current || makeConversationId();
+    const conversationId = activeConversationIdRef.current;
     activeConversationIdRef.current = conversationId;
     setActiveConversationId(conversationId);
     setMessages(history);
-    saveConversation(conversationId, history);
+    if (conversationId) saveConversation(conversationId, history);
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
     void askLatestQuestion(history, conversationId);
@@ -256,6 +283,11 @@ function App() {
     if (pending) return;
     const history = messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages;
     void askLatestQuestion(history);
+  };
+
+  const submitFeedback = async (messageId, rating) => {
+    try { await api('/api/feedback', { method: 'POST', body: JSON.stringify({ messageId, rating }) }); }
+    catch (error) { window.alert(error.message); }
   };
 
   const normalizedQuery = historyQuery.trim().toLocaleLowerCase('vi');
@@ -306,7 +338,7 @@ function App() {
             {normalizedQuery && <button className="history-clear-search" type="button" onClick={() => setHistoryQuery('')}>Xóa tìm kiếm</button>}
           </div>}
         </div>
-        <p className="history-storage-note">Lịch sử được lưu trên trình duyệt này</p>
+        <p className="history-storage-note">{historyLoaded ? 'Lịch sử được lưu an toàn trên máy chủ' : 'Đang tải lịch sử…'}</p>
       </aside>
       <section className="chat-column" aria-label="Trò chuyện với trợ lý học phí">
         <div className="current-chat-heading"><span>{messages.length ? getConversationTitle(messages) : 'Cuộc trò chuyện mới'}</span><span className="current-chat-meta">Tài liệu học phí · 4 nguồn</span></div>
@@ -322,7 +354,7 @@ function App() {
             const answerIndex = i + 1;
             return <article className="thread-turn" key={`${i}-${message.content}`}>
               <p className="user-message">{message.content}</p>
-              {answer?.role === 'assistant' && <AssistantAnswer message={answer} index={answerIndex} latest={answerIndex === messages.length - 1} onRetry={retry} onRegenerate={regenerate} />}
+              {answer?.role === 'assistant' && <AssistantAnswer message={answer} index={answerIndex} latest={answerIndex === messages.length - 1} onRetry={retry} onRegenerate={regenerate} onFeedback={submitFeedback} />}
             </article>;
           })}
         </div>
@@ -341,18 +373,24 @@ function App() {
   </div>;
 }
 
-function SourceReader({ sourceId }) {
+function SourceReader({ sourceId, documentId }) {
   const source = sources[sourceId];
   const [state, setState] = useState({ status: 'loading', html: '' });
+  const [documentMeta, setDocumentMeta] = useState(null);
 
   useEffect(() => {
     let active = true;
-    fetch(source.href)
-      .then((response) => {
-        if (!response.ok) throw new Error('Không tải được tài liệu nguồn.');
-        return response.text();
-      })
-      .then((markdown) => {
+    const load = async () => {
+      const response = await fetch(documentId ? `/api/documents/${encodeURIComponent(documentId)}` : source.href, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Không tải được tài liệu nguồn.');
+      if (documentId) {
+        const data = await response.json();
+        if (active) setDocumentMeta(data);
+        return data.text;
+      }
+      return response.text();
+    };
+    load().then((markdown) => {
         const rendered = marked.parse(markdown, { gfm: true, breaks: false });
         const safeHtml = DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } });
         const documentFragment = document.createElement('template');
@@ -364,12 +402,13 @@ function SourceReader({ sourceId }) {
           scroller.append(table);
         });
         if (active) setState({ status: 'ready', html: DOMPurify.sanitize(documentFragment.innerHTML, { USE_PROFILES: { html: true } }) });
-      })
-      .catch(() => {
+      }).catch(() => {
         if (active) setState({ status: 'error', html: '' });
       });
     return () => { active = false; };
-  }, [source.href]);
+  }, [source?.href, documentId]);
+
+  if (!documentId && !source) return <p className="source-reader-status">Không tìm thấy tài liệu.</p>;
 
   return <div className="source-page">
     <header className="source-header">
@@ -377,8 +416,8 @@ function SourceReader({ sourceId }) {
       <a className="source-back" href="/">Về cuộc trò chuyện</a>
     </header>
     <main className="source-reader">
-      <div className="source-reader-meta"><Icon name="document" /><span>{source.label}</span></div>
-      <h1>{source.title}</h1>
+      <div className="source-reader-meta"><Icon name="document" /><span>{documentMeta?.name || source?.label}</span></div>
+      <h1>{documentMeta?.title || source?.title}</h1>
       {state.status === 'loading' && <p className="source-reader-status" role="status">Đang mở tài liệu…</p>}
       {state.status === 'error' && <p className="source-reader-status" role="alert">Không tải được tài liệu. Hãy thử mở lại từ trích dẫn.</p>}
       {state.status === 'ready' && <article className="markdown-document" dangerouslySetInnerHTML={{ __html: state.html }} />}
@@ -386,9 +425,4 @@ function SourceReader({ sourceId }) {
   </div>;
 }
 
-function Root() {
-  const sourceId = new URLSearchParams(location.search).get('source');
-  return sourceId && sources[sourceId] ? <SourceReader sourceId={sourceId} /> : <App />;
-}
-
-createRoot(document.getElementById('root')).render(<React.StrictMode><Root /></React.StrictMode>);
+export { App, SourceReader };

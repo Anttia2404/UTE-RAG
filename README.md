@@ -1,66 +1,84 @@
-# Trợ lý học phí
+# Trợ lý học phí UTE
 
-Chatbot web dùng React và Vite. Giao diện được viết bằng component React; CSS quản lý phần trình bày.
+Ứng dụng RAG dùng React/Vite, FastAPI, SQLAlchemy, Elasticsearch và Google Generative AI SDK (`google-generativeai`). Tài khoản sinh viên tra cứu thông báo, đặt câu hỏi có trích dẫn và xem lịch sử riêng; nhân viên/quản trị viên nạp tài liệu, rà soát thông báo, theo dõi phản hồi và quản lý tài khoản.
 
 ## Chạy local
-
-Từ thư mục này, cài dependencies:
 
 ```powershell
 npm install
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+Copy-Item .env.example .env.local
 ```
 
-Sao chép `.env.example` thành `.env.local`, điền `GOOGLE_API_KEY` và `GEMINI_MODEL`, rồi chạy cả frontend lẫn backend:
+Điền `GOOGLE_API_KEY` và `GEMINI_MODEL` trong `.env.local`, sau đó chạy frontend và backend:
 
 ```powershell
-Copy-Item .env.example .env.local
 npm run dev:full
 ```
 
-Mở URL Vite in ra (thường là `http://localhost:5173`). Backend chạy ở `127.0.0.1:8787`; Vite chuyển tiếp `/api` tới backend.
+Mở `http://localhost:5173`. Backend FastAPI chạy ở `127.0.0.1:8788`; Vite chuyển tiếp `/api`. `.env.local` và database được loại khỏi Git.
 
-Thêm `?demo=1` để mở câu trả lời mẫu từ Quyết định 2807 và xem cách hiển thị trích dẫn.
+Mặc định database là SQLite tại `data/tuition-assistant.db`, phù hợp phát triển và thử nghiệm trên một máy. Có thể bật PostgreSQL cùng Elasticsearch bằng Docker:
 
-## Backend và Gemini SDK
+```powershell
+docker compose up -d
+```
 
-Backend Python nằm ở `server/google_api.py`, dùng trực tiếp package `google-generativeai` với `GenerativeModel.generate_content()` và nhận `POST /api/chat`. Điền cấu hình trong `.env.local`:
+Sau khi PostgreSQL sẵn sàng, thêm vào `.env.local` để dùng nó thay SQLite:
 
 ```env
-GOOGLE_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.5-flash
-PORT=8787
+DATABASE_URL=postgresql+psycopg://ute_rag:local_dev_only_change_me@127.0.0.1:5433/ute_rag
+ELASTICSEARCH_URL=http://127.0.0.1:9200
 ```
 
-Không đặt key vào biến `VITE_*` hay mã React. Backend truy hồi 5 chunk liên quan, gửi chúng làm căn cứ cho Gemini, rồi trả lời theo cấu trúc:
+Khởi động lại backend sau khi đổi database. Compose chỉ dành cho local development; đổi mật khẩu mặc định nếu đưa các dịch vụ ra khỏi máy cá nhân. Nếu Elasticsearch chưa chạy, chat tài liệu tĩnh vẫn dùng bộ truy hồi hiện có; tìm kiếm trong giao diện dùng fallback database và knowledge base tĩnh.
 
-```js
-{ answer: "...", citations: [{ sourceId: "2807", label: "..." }], suggestions: ["..."] }
+## Tài khoản và phân quyền
+
+Sinh viên có thể tự đăng ký; tài khoản đăng ký công khai luôn có quyền `student`. Tạo tài khoản quản trị ban đầu bằng lệnh tương tác (mật khẩu không hiện trên màn hình):
+
+```powershell
+python -m server.create_admin
 ```
 
-`GET /api/health` cho biết backend đang chạy và đã thấy API key chưa. Node truy hồi các vector hiện có, còn Python gọi Gemini SDK trực tiếp. Google đã đánh dấu `google-generativeai` là SDK legacy và khuyến nghị [google-genai](https://ai.google.dev/gemini-api/docs/libraries); project đang giữ package bạn yêu cầu.
+Quản trị viên tạo nhân viên/quản trị viên khác trong mục **Quản lý**. Phiên đăng nhập dùng cookie HttpOnly; mật khẩu được băm Argon2. Ở môi trường triển khai, đặt `APP_ENV=production` và `APP_SECRET_KEY` thành giá trị ngẫu nhiên riêng, giữ HTTPS bật để cookie Secure hoạt động.
 
-Danh mục nguồn nằm trong `src/sources.js`; các bản Markdown được phục vụ từ `public/sources/`.
-Các trích dẫn mở trang đọc tài liệu đã render Markdown trong app để giữ dấu tiếng Việt, bảng và danh sách dễ đọc.
+## Tài liệu và knowledge base
 
-## Chunk và embedding tài liệu
-
-Lịch sử hội thoại được lưu trong `localStorage` của trình duyệt hiện tại. Người dùng có thể tìm trong câu hỏi và câu trả lời, mở lại hoặc xóa từng cuộc trò chuyện. Dữ liệu không đồng bộ giữa các thiết bị.
-
-Bốn file Markdown ở thư mục gốc là nguồn dữ liệu gốc. Chúng được chia thành các đoạn khoảng 1.100 ký tự với 160 ký tự chồng lấn. Chạy lệnh sau để đồng bộ bản hiển thị, chia chunk và tạo lại embedding sau khi sửa tài liệu:
+Bốn file Markdown gốc nằm ở thư mục gốc và được phục vụ dưới `public/sources/`. Chạy lại bước chunk và tạo embedding khi sửa các tài liệu này:
 
 ```powershell
 npm run kb:build
 ```
 
-Lần đầu chạy, Transformers.js tải model embedding đa ngôn ngữ về cache máy người dùng; lệnh không cần API key. Kết quả chunk kèm vector 384 chiều được ghi vào `public/kb/chunks.json`.
+Các vector 384 chiều được lưu tại `public/kb/chunks.json`; truy hồi local kết hợp độ tương đồng ngữ nghĩa và từ khóa. Elasticsearch lập chỉ mục từ khóa cho bộ tài liệu tĩnh và các tài liệu tải lên. Nhân viên có thể tải `.docx`, `.pdf`, `.md`, `.txt` (tối đa 25 MB); backend trích xuất văn bản, chia đoạn có overlap, lưu metadata và lập chỉ mục. PDF dạng ảnh cần OCR trước khi tải lên.
 
-Thử tìm các đoạn liên quan bằng embedding kết hợp từ khóa:
+Tài liệu mới tạo một thông báo bản nháp. Nhân viên rà soát rồi chọn **Công bố** để sinh viên có thể xem nội dung và mở trích dẫn. Dữ liệu tải lên nằm trong `data/uploads/`, được loại khỏi Git.
+
+## Lịch sử, đánh giá và API
+
+Chat và đánh giá được lưu trong database, gắn với tài khoản; người dùng chỉ truy cập lịch sử của chính mình. Lịch sử cũ từ `localStorage` được chuyển lên máy chủ sau lần đăng nhập tiếp theo và chỉ xóa bản trình duyệt sau khi API xác nhận nhận dữ liệu.
+
+Các endpoint chính:
+
+- `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
+- `GET/POST/PATCH/DELETE /api/announcements`
+- `POST /api/documents/upload`, `GET /api/documents/{id}`
+- `GET /api/search`, `POST /api/chat`, `GET/DELETE /api/chats`
+- `POST /api/feedback`, `GET /api/admin/overview`, `GET /api/admin/feedback`
+- `GET /api/health`
+
+LLM gọi trực tiếp `google-generativeai` và dùng `GOOGLE_API_KEY` phía server; không gửi key tới trình duyệt. Prompt yêu cầu chỉ căn cứ các trích đoạn truy hồi, hỏi làm rõ khi thiếu khóa/ngành/học kỳ/năm học/loại học phí, và trả citation theo nguồn được phép.
+
+## Kiểm tra
 
 ```powershell
-npm run kb:search -- "Học kỳ I năm học 2026-2027 thu học phí đến ngày nào?"
+npm run build
+.\.venv\Scripts\python.exe -m compileall -q server
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Backend gọi `retrieveRelevantChunks(query)` từ `src/knowledge-base.node.js` để lấy chunk xếp hạng cao nhất. Query phải embed cùng model đã tạo index; nếu đổi model embedding thì chạy lại `npm run kb:build`.
+`GET /api/health` báo trạng thái cấu hình Gemini, database, knowledge base và Elasticsearch.
