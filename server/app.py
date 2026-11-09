@@ -20,13 +20,17 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 try:
-    from .database import Announcement, ChatMessage, ChatSession, Document, Feedback, KnowledgeNode, SessionLocal, User, initialize_database, utcnow
+    from .chat_controls import ChatLimitError, cache_answer, get_cached_answer, make_cache_key, refund_student_call, reserve_llm_call
+    from .database import Announcement, ChatMessage, ChatSession, Document, Feedback, KnowledgeNode, SessionLocal, SupportTicket, User, initialize_database, utcnow
     from .google_api import api_key, build_prompt, model_name, parse_model_response
     from .search import ensure_index, index_knowledge_nodes, is_available, search_for_chat, search_for_student
+    from .safety import redact_text, ungrounded_facts
 except ImportError:
-    from database import Announcement, ChatMessage, ChatSession, Document, Feedback, KnowledgeNode, SessionLocal, User, initialize_database, utcnow
+    from chat_controls import ChatLimitError, cache_answer, get_cached_answer, make_cache_key, refund_student_call, reserve_llm_call
+    from database import Announcement, ChatMessage, ChatSession, Document, Feedback, KnowledgeNode, SessionLocal, SupportTicket, User, initialize_database, utcnow
     from google_api import api_key, build_prompt, model_name, parse_model_response
     from search import ensure_index, index_knowledge_nodes, is_available, search_for_chat, search_for_student
+    from safety import redact_text, ungrounded_facts
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -169,6 +173,17 @@ class FeedbackPayload(BaseModel):
     comment: str = Field(default="", max_length=2000)
 
 
+class TicketPayload(BaseModel):
+    question: str = Field(min_length=2, max_length=8000)
+    sessionId: str | None = None
+    messageId: str | None = None
+    note: str = Field(default="", max_length=2000)
+
+
+class TicketReplyPayload(BaseModel):
+    answer: str = Field(min_length=2, max_length=8000)
+
+
 def announcement_dict(item: Announcement, include_content=True):
     result = {
         "id": item.id, "title": item.title, "category": item.category, "cohort": item.cohort,
@@ -189,6 +204,19 @@ def session_dict(item: ChatSession, include_messages=False):
             {"id": message.id, "role": message.role, "content": message.content, "citations": message.citations or [], "suggestions": message.suggestions or [], "createdAt": message.created_at}
             for message in item.messages
         ]
+    return result
+
+
+def ticket_dict(item: SupportTicket, db: Session | None = None, include_student=False):
+    result = {
+        "id": item.id, "question": item.question, "note": item.note, "answer": item.answer,
+        "status": item.status, "sessionId": item.session_id, "messageId": item.message_id,
+        "createdAt": item.created_at, "updatedAt": item.updated_at,
+    }
+    if include_student:
+        student = db.get(User, item.user_id) if db else None
+        result["student"] = student.full_name if student else "Sinh viên"
+        result["studentEmail"] = student.email if student else ""
     return result
 
 
@@ -530,10 +558,10 @@ def import_local_chats(payload: ChatImportPayload, user: User = Depends(get_curr
         messages = [m for m in item["messages"] if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str) and m["content"].strip()]
         if not messages:
             continue
-        session = ChatSession(id=new_id(), user_id=user.id, title=str(item.get("title") or messages[-1]["content"])[:300])
+        session = ChatSession(id=new_id(), user_id=user.id, title=redact_text(str(item.get("title") or messages[-1]["content"]))[:300])
         db.add(session)
         for message in messages[:200]:
-            db.add(ChatMessage(id=new_id(), session_id=session.id, role=message["role"], content=message["content"][:8000], citations=message.get("citations") if isinstance(message.get("citations"), list) else [], suggestions=message.get("suggestions") if isinstance(message.get("suggestions"), list) else []))
+            db.add(ChatMessage(id=new_id(), session_id=session.id, role=message["role"], content=redact_text(message["content"][:8000]), citations=message.get("citations") if isinstance(message.get("citations"), list) else [], suggestions=message.get("suggestions") if isinstance(message.get("suggestions"), list) else []))
         imported += 1
     db.commit()
     return {"imported": imported}
@@ -559,7 +587,12 @@ def delete_chat(session_id: str, user: User = Depends(get_current_user), db: Ses
 
 @app.post("/api/chat")
 def chat(payload: ChatPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    messages = [message for message in payload.messages if isinstance(message, dict) and message.get("role") in {"user", "assistant"} and isinstance(message.get("content"), str) and not message.get("status")]
+    messages = [
+        {**message, "content": redact_text(message["content"][:8000])}
+        for message in payload.messages
+        if isinstance(message, dict) and message.get("role") in {"user", "assistant"}
+        and isinstance(message.get("content"), str) and not message.get("status")
+    ]
     if not messages or messages[-1]["role"] != "user" or not messages[-1]["content"].strip():
         raise HTTPException(status_code=400, detail="Hãy nhập câu hỏi trước khi gửi.")
     if not api_key():
@@ -577,6 +610,7 @@ def chat(payload: ChatPayload, user: User = Depends(get_current_user), db: Sessi
     session.title = question[:54]
     session.updated_at = utcnow()
     db.commit()
+    reserved_student_quota = False
     try:
         chunks = search_for_chat(question, filters=payload.filters, source_ids=payload.sourceIds, limit=5)
         if user.role == "student":
@@ -584,7 +618,27 @@ def chat(payload: ChatPayload, user: User = Depends(get_current_user), db: Sessi
             if document_ids:
                 visible_ids = set(db.scalars(select(Document.id).join(Announcement).where(Document.id.in_(document_ids), Announcement.status == "published")))
                 chunks = [chunk for chunk in chunks if not chunk.get("documentId") or chunk.get("documentId") in visible_ids]
+        if not chunks:
+            answer = {
+                "answer": "Mình chưa tìm thấy đoạn văn bản chính thức đủ căn cứ để trả lời câu hỏi này. Bạn có thể gửi câu hỏi cho cán bộ hỗ trợ.",
+                "citations": [], "suggestions": [],
+            }
+            assistant_message = ChatMessage(id=new_id(), session_id=session.id, role="assistant", content=answer["answer"], citations=[], suggestions=[])
+            db.add(assistant_message)
+            session.updated_at = utcnow()
+            db.commit()
+            return answer | {"sessionId": session.id, "messageId": assistant_message.id, "cached": False}
         prompt, allowed_sources = build_prompt(chunks)
+        cache_key = make_cache_key(question, messages[:-1], chunks)
+        cached = get_cached_answer(cache_key)
+        if cached:
+            assistant_message = ChatMessage(id=new_id(), session_id=session.id, role="assistant", content=cached["answer"], citations=cached["citations"], suggestions=cached["suggestions"])
+            db.add(assistant_message)
+            session.updated_at = utcnow()
+            db.commit()
+            return cached | {"sessionId": session.id, "messageId": assistant_message.id, "cached": True}
+
+        reserved_student_quota = reserve_llm_call(db, user)
         genai.configure(api_key=api_key())
         model = genai.GenerativeModel(model_name=model_name(), system_instruction=prompt, generation_config={"temperature": 0.2, "max_output_tokens": 900})
         history = [
@@ -593,15 +647,104 @@ def chat(payload: ChatPayload, user: User = Depends(get_current_user), db: Sessi
         ]
         result = model.generate_content(history, request_options={"timeout": 60})
         answer = parse_model_response(result.text, allowed_sources)
+        unsupported = ungrounded_facts(answer["answer"], "\n\n".join(chunk.get("text", "") for chunk in chunks))
+        if unsupported:
+            answer = {
+                "answer": "Mình chưa thể xác nhận một số tiền, tỷ lệ hoặc thời hạn trong câu trả lời từ các văn bản hiện có. Bạn hãy mở tài liệu nguồn để đối chiếu hoặc gửi câu hỏi cho cán bộ hỗ trợ.",
+                "citations": answer["citations"],
+                "suggestions": [],
+                "guarded": True,
+            }
+        cache_answer(cache_key, answer, question)
         assistant_message = ChatMessage(id=new_id(), session_id=session.id, role="assistant", content=answer["answer"], citations=answer["citations"], suggestions=answer["suggestions"])
         db.add(assistant_message)
         session.updated_at = utcnow()
         db.commit()
-        return answer | {"sessionId": session.id, "messageId": assistant_message.id}
+        return answer | {"sessionId": session.id, "messageId": assistant_message.id, "cached": False}
+    except ChatLimitError as error:
+        db.rollback()
+        headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
+        raise HTTPException(status_code=error.status_code, detail=str(error), headers=headers)
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as error:
         db.rollback()
+        try:
+            refund_student_call(db, user, reserved_student_quota)
+        except Exception:
+            db.rollback()
         print(f"Gemini request failed: {type(error).__name__}")
         raise HTTPException(status_code=502, detail="Gemini chưa xử lý được yêu cầu. Kiểm tra GEMINI_MODEL và API key.", headers={"X-Session-Id": session.id})
+
+
+@app.post("/api/tickets", status_code=201)
+def create_support_ticket(payload: TicketPayload, user: User = Depends(require_roles("student")), db: Session = Depends(get_db)):
+    session = db.get(ChatSession, payload.sessionId) if payload.sessionId else None
+    if payload.sessionId and (not session or session.user_id != user.id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc trò chuyện.")
+    message = db.get(ChatMessage, payload.messageId) if payload.messageId else None
+    if payload.messageId:
+        chat_session = db.get(ChatSession, message.session_id) if message else None
+        if not message or message.role != "assistant" or not chat_session or chat_session.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy câu trả lời cần hỗ trợ.")
+        existing = db.scalar(select(SupportTicket).where(SupportTicket.user_id == user.id, SupportTicket.message_id == message.id, SupportTicket.status == "open"))
+        if existing:
+            return ticket_dict(existing)
+        session = chat_session
+
+    ticket = SupportTicket(
+        id=new_id(), user_id=user.id, session_id=session.id if session else None,
+        message_id=message.id if message else None, question=redact_text(payload.question.strip()),
+        note=redact_text(payload.note.strip()), status="open",
+    )
+    db.add(ticket)
+    db.commit()
+    return ticket_dict(ticket)
+
+
+@app.get("/api/tickets")
+def list_support_tickets(status_value: Literal["open", "answered", "closed"] | None = Query(default=None, alias="status"), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stmt = select(SupportTicket).order_by(SupportTicket.updated_at.desc()).limit(300)
+    if user.role == "student":
+        stmt = stmt.where(SupportTicket.user_id == user.id)
+    if status_value:
+        stmt = stmt.where(SupportTicket.status == status_value)
+    tickets = list(db.scalars(stmt))
+    return [ticket_dict(ticket, db, include_student=user.role in {"staff", "admin"}) for ticket in tickets]
+
+
+@app.post("/api/tickets/{ticket_id}/reply")
+def reply_to_support_ticket(ticket_id: str, payload: TicketReplyPayload, staff: User = Depends(require_roles("staff", "admin")), db: Session = Depends(get_db)):
+    ticket = db.get(SupportTicket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu hỗ trợ.")
+    answer = redact_text(payload.answer.strip())
+    ticket.answer = answer
+    ticket.status = "answered"
+    ticket.answered_by = staff.id
+    ticket.updated_at = utcnow()
+    if ticket.session_id:
+        db.add(ChatMessage(
+            id=new_id(), session_id=ticket.session_id, role="assistant",
+            content=f"**Phản hồi từ cán bộ hỗ trợ**\n\n{answer}", citations=[], suggestions=[],
+        ))
+        session = db.get(ChatSession, ticket.session_id)
+        if session:
+            session.updated_at = utcnow()
+    db.commit()
+    return ticket_dict(ticket)
+
+
+@app.post("/api/tickets/{ticket_id}/close")
+def close_support_ticket(ticket_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ticket = db.get(SupportTicket, ticket_id)
+    if not ticket or (user.role == "student" and ticket.user_id != user.id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu hỗ trợ.")
+    ticket.status = "closed"
+    ticket.updated_at = utcnow()
+    db.commit()
+    return ticket_dict(ticket)
 
 
 @app.post("/api/feedback", status_code=201)
@@ -614,9 +757,9 @@ def submit_feedback(payload: FeedbackPayload, user: User = Depends(get_current_u
         raise HTTPException(status_code=403, detail="Bạn chỉ có thể đánh giá câu trả lời của mình.")
     feedback = db.scalar(select(Feedback).where(Feedback.user_id == user.id, Feedback.message_id == message.id))
     if feedback:
-        feedback.rating, feedback.comment, feedback.status = payload.rating, payload.comment.strip(), "new"
+        feedback.rating, feedback.comment, feedback.status = payload.rating, redact_text(payload.comment.strip()), "new"
     else:
-        feedback = Feedback(id=new_id(), user_id=user.id, message_id=message.id, rating=payload.rating, comment=payload.comment.strip())
+        feedback = Feedback(id=new_id(), user_id=user.id, message_id=message.id, rating=payload.rating, comment=redact_text(payload.comment.strip()))
         db.add(feedback)
     db.commit()
     return {"id": feedback.id, "rating": feedback.rating, "status": feedback.status}

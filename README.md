@@ -1,6 +1,6 @@
 # Trợ lý học phí UTE
 
-Ứng dụng RAG dùng React/Vite, FastAPI, SQLAlchemy, Elasticsearch và Google Generative AI SDK (`google-generativeai`). Tài khoản sinh viên tra cứu thông báo, đặt câu hỏi có trích dẫn và xem lịch sử riêng; nhân viên/quản trị viên nạp tài liệu, rà soát thông báo, theo dõi phản hồi và quản lý tài khoản.
+Ứng dụng RAG dùng React/Vite, FastAPI, SQLAlchemy, Elasticsearch và Google Generative AI SDK (`google-generativeai`). Tài khoản sinh viên tra cứu thông báo, đặt câu hỏi có trích dẫn, chuyển câu hỏi cho cán bộ và xem lịch sử riêng; nhân viên/quản trị viên nạp tài liệu, rà soát thông báo, trả lời yêu cầu hỗ trợ, theo dõi phản hồi và quản lý tài khoản.
 
 ## Chạy local
 
@@ -67,10 +67,15 @@ Các endpoint chính:
 - `GET/POST/PATCH/DELETE /api/announcements`
 - `POST /api/documents/upload`, `GET /api/documents/{id}`
 - `GET /api/search`, `POST /api/chat`, `GET/DELETE /api/chats`
+- `POST/GET /api/tickets`, `POST /api/tickets/{id}/reply`, `POST /api/tickets/{id}/close`
 - `POST /api/feedback`, `GET /api/admin/overview`, `GET /api/admin/feedback`
 - `GET /api/health`
 
 LLM gọi trực tiếp `google-generativeai` và dùng `GOOGLE_API_KEY` phía server; không gửi key tới trình duyệt. Prompt yêu cầu chỉ căn cứ các trích đoạn truy hồi, hỏi làm rõ khi thiếu khóa/ngành/học kỳ/năm học/loại học phí, và trả citation theo nguồn được phép.
+
+Trước khi gửi câu hỏi cho Gemini, backend che email, số điện thoại và chuỗi 8 chữ số có dạng mã sinh viên. Sau khi nhận kết quả, bộ kiểm tra xác định đối chiếu số tiền, phần trăm và ngày trong câu trả lời với các chunk đã truy hồi; nếu thấy dữ kiện số chưa được nguồn hỗ trợ, ứng dụng thay câu trả lời bằng thông báo an toàn. Sinh viên mặc định có tối đa 30 lượt gọi Gemini mỗi ngày và 5 lượt/phút; toàn hệ thống có trần 800 lượt/ngày. Nhân viên và quản trị viên không bị áp dụng hạn mức này. Câu trả lời được cache trong RAM 10 phút, khóa cache bao gồm lịch sử ngắn và dấu vân tay nội dung nguồn; cache mất khi backend khởi động lại.
+
+Sinh viên có thể chọn **Hỏi cán bộ** dưới câu trả lời. Nhân viên xem và trả lời yêu cầu trong mục **Quản lý → Yêu cầu cần trả lời**; phản hồi cũng được thêm vào lịch sử chat của sinh viên. Người học xem trạng thái hoặc đóng yêu cầu ở mục **Hỗ trợ**.
 
 ## Kiểm tra
 

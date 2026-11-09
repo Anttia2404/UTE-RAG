@@ -733,6 +733,22 @@ svg { display: block; }
 .feedback-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .feedback-actions button { padding: 5px 9px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--foreground); font: inherit; cursor: pointer; }
 .feedback-actions button:hover { border-color: var(--primary); color: var(--primary); }
+.feedback-actions .handoff-button { margin-left: 4px; border-color: var(--primary); color: var(--primary); }
+.ticket-list { display: grid; gap: 12px; }
+.ticket-card { display: grid; gap: 10px; }
+.ticket-card h2, .ticket-card h3 { margin: 0; font-size: 15px; line-height: 1.5; }
+.ticket-card time, .ticket-card small { color: var(--muted); font-size: 11px; }
+.ticket-status-open { background: var(--workspace-info-background); color: var(--workspace-info-foreground); }
+.ticket-status-answered { background: var(--pill-positive-background); color: var(--pill-positive-foreground); }
+.ticket-status-closed { background: var(--secondary); color: var(--muted); }
+.ticket-note { margin: 0; color: var(--muted); font-size: 13px; }
+.ticket-answer { margin: 0; padding: 12px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-hover); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.ticket-answer p { margin: 6px 0 0; }
+.ticket-reply-form { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-strong); }
+.ticket-reply-form label { font-size: 12px; font-weight: 500; }
+.ticket-reply-form textarea { width: 100%; min-height: 76px; padding: 10px 11px; border: 1px solid var(--border-strong); border-radius: 9px; outline: none; resize: vertical; background: var(--surface); color: var(--foreground); font: inherit; font-size: 13px; }
+.ticket-reply-form textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--ring-focus); }
+.ticket-reply-form .primary-button { justify-self: start; }
 
 @media (max-width: 900px) {
   .portal-header { gap: 12px; padding: 0 15px; }

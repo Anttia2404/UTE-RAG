@@ -149,11 +149,44 @@ def fallback_static_chunks(query, source_ids=None):
 
 
 def search_for_chat(query, filters=None, source_ids=None, limit=5):
-    chunks = search_chunks(query, filters=filters, source_ids=source_ids, limit=limit)
-    if chunks is not None:
-        return chunks
-    return fallback_static_chunks(query, source_ids=source_ids)
+    keyword = search_chunks(query, filters=filters, source_ids=source_ids, limit=max(limit * 4, 20))
+    if keyword is None:
+        return fallback_static_chunks(query, source_ids=source_ids)[:limit]
+    try:
+        semantic = fallback_static_chunks(query, source_ids=source_ids)
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return keyword[:limit]
+
+    fused = {}
+    for ranked in (keyword, semantic):
+        for rank, chunk in enumerate(ranked, start=1):
+            key = (
+                chunk.get("sourceId", ""), chunk.get("documentId", ""), chunk.get("section", ""),
+                " ".join(chunk.get("text", "").split()),
+            )
+            if key not in fused:
+                fused[key] = {"chunk": chunk, "score": 0.0}
+            fused[key]["score"] += 1 / (60 + rank)
+    ranked_chunks = sorted(fused.values(), key=lambda item: item["score"], reverse=True)
+    return [item["chunk"] | {"rrfScore": item["score"]} for item in ranked_chunks[:limit]]
 
 
 def search_for_student(query, filters=None, limit=20):
-    return search_chunks(query, filters=filters, limit=limit) if is_available() else None
+    keyword = search_chunks(query, filters=filters, limit=max(limit * 4, 20))
+    if keyword is None:
+        return None
+    try:
+        semantic = fallback_static_chunks(query)
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return keyword[:limit]
+    for field, value in (filters or {}).items():
+        if value:
+            semantic = [chunk for chunk in semantic if chunk.get(field) == value]
+    fused = {}
+    for ranked in (keyword, semantic):
+        for rank, chunk in enumerate(ranked, start=1):
+            key = (chunk.get("sourceId", ""), chunk.get("section", ""), " ".join(chunk.get("text", "").split()))
+            if key not in fused:
+                fused[key] = {"chunk": chunk, "score": 0.0}
+            fused[key]["score"] += 1 / (60 + rank)
+    return [item["chunk"] | {"rrfScore": item["score"]} for item in sorted(fused.values(), key=lambda item: item["score"], reverse=True)[:limit]]

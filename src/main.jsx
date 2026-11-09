@@ -121,7 +121,7 @@ function AnswerActions({ onCopy, onRegenerate, latest }) {
   </div>;
 }
 
-function AssistantAnswer({ message, index, latest, onRetry, onRegenerate, onFeedback }) {
+function AssistantAnswer({ message, index, latest, onRetry, onRegenerate, onFeedback, onHandoff, canHandoff }) {
   if (message.status === 'error') return <div className="assistant-error" role="alert">
     <strong>Trợ lý chưa trả lời được</strong><p>{message.reason}</p>
     <button className="outline-button retry-button" type="button" onClick={onRetry}>Thử lại</button>
@@ -131,7 +131,7 @@ function AssistantAnswer({ message, index, latest, onRetry, onRegenerate, onFeed
     <div className="answer-copy">{(message.content || '').split(/\n\s*\n/).filter(Boolean).map((paragraph, i) => <p key={i}><AnswerText text={paragraph} /></p>)}</div>
     {!!message.citations?.length && <div className="citation-list">{message.citations.map((citation, i) => <Citation citation={citation} key={`${citation.sourceId}-${i}`} />)}</div>}
     <AnswerActions latest={latest} onCopy={() => navigator.clipboard?.writeText(message.content || '')} onRegenerate={onRegenerate} data-index={index} />
-    {message.id && <div className="feedback-actions" aria-label="Đánh giá câu trả lời"><span>Hữu ích?</span><button type="button" onClick={() => onFeedback(message.id, 'helpful')}>Có</button><button type="button" onClick={() => onFeedback(message.id, 'not_helpful')}>Chưa</button></div>}
+    {message.id && <div className="feedback-actions" aria-label="Đánh giá câu trả lời"><span>Hữu ích?</span><button type="button" onClick={() => onFeedback(message.id, 'helpful')}>Có</button><button type="button" onClick={() => onFeedback(message.id, 'not_helpful')}>Chưa</button>{canHandoff && <button className="handoff-button" type="button" onClick={() => onHandoff(message)}>Hỏi cán bộ</button>}</div>}
     {latest && !!message.suggestions?.length && <div className="follow-up-list"><p className="section-label">Hỏi tiếp</p>{message.suggestions.map((question) => <button className="suggestion-button" type="button" key={question} onClick={() => onRegenerate(question)}>{question}</button>)}</div>}
   </div>;
 }
@@ -301,6 +301,16 @@ function App({ user, onLogout, onNavigate, currentSection = 'chat', isStaff = fa
     catch (error) { window.alert(error.message); }
   };
 
+  const handoffToStaff = async (message) => {
+    const answerIndex = messages.findIndex((item) => item.id === message.id);
+    const question = [...messages.slice(0, answerIndex)].reverse().find((item) => item.role === 'user')?.content;
+    if (!question) return;
+    try {
+      await api('/api/tickets', { method: 'POST', body: JSON.stringify({ sessionId: activeConversationIdRef.current, messageId: message.id, question }) });
+      window.alert('Đã chuyển câu hỏi cho cán bộ. Bạn có thể xem trạng thái trong mục “Yêu cầu hỗ trợ”.');
+    } catch (error) { window.alert(error.message); }
+  };
+
   const normalizedQuery = historyQuery.trim().toLocaleLowerCase('vi');
   const visibleConversations = conversations.filter((conversation) => {
     if (!normalizedQuery) return true;
@@ -358,6 +368,7 @@ function App({ user, onLogout, onNavigate, currentSection = 'chat', isStaff = fa
           <button className={currentSection === 'chat' ? 'is-active' : ''} type="button" aria-current={currentSection === 'chat' ? 'page' : undefined} onClick={() => onNavigate?.('chat')}><Icon name="messages" /><span>Trò chuyện</span></button>
           <button className={currentSection === 'notices' ? 'is-active' : ''} type="button" aria-current={currentSection === 'notices' ? 'page' : undefined} onClick={() => onNavigate?.('notices')}><Icon name="bell" /><span>Thông báo</span></button>
           <button className={currentSection === 'search' ? 'is-active' : ''} type="button" aria-current={currentSection === 'search' ? 'page' : undefined} onClick={() => onNavigate?.('search')}><Icon name="search" /><span>Tra cứu</span></button>
+          {user?.role === 'student' && <button className={currentSection === 'tickets' ? 'is-active' : ''} type="button" aria-current={currentSection === 'tickets' ? 'page' : undefined} onClick={() => onNavigate?.('tickets')}><Icon name="messages" /><span>Yêu cầu hỗ trợ</span></button>}
           {isStaff && <button className={currentSection === 'workspace' ? 'is-active' : ''} type="button" aria-current={currentSection === 'workspace' ? 'page' : undefined} onClick={() => onNavigate?.('workspace')}><Icon name="document" /><span>Quản lý</span></button>}
         </nav>
         <div className="sidebar-footer">
@@ -387,7 +398,7 @@ function App({ user, onLogout, onNavigate, currentSection = 'chat', isStaff = fa
             const answerIndex = i + 1;
             return <article className="thread-turn" key={`${i}-${message.content}`}>
               <p className="user-message">{message.content}</p>
-              {answer?.role === 'assistant' && <AssistantAnswer message={answer} index={answerIndex} latest={answerIndex === messages.length - 1} onRetry={retry} onRegenerate={regenerate} onFeedback={submitFeedback} />}
+              {answer?.role === 'assistant' && <AssistantAnswer message={answer} index={answerIndex} latest={answerIndex === messages.length - 1} onRetry={retry} onRegenerate={regenerate} onFeedback={submitFeedback} onHandoff={handoffToStaff} canHandoff={user?.role === 'student'} />}
             </article>;
           })}
         </div>
