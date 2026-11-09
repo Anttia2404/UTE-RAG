@@ -12,6 +12,11 @@ function Icon({ name, className = '' }) {
     external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
+    messages: <><path d="M21 11.5a7.5 7.5 0 0 1-7.5 7.5H8l-5 3v-6.5A7.5 7.5 0 1 1 21 11.5Z" /><path d="M8 9h8M8 13h5" /></>,
+    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+    logout: <><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></>,
+    moon: <path d="M20.9 13.1A8.5 8.5 0 0 1 10.9 3.1 8.5 8.5 0 1 0 20.9 13.1Z" />,
     menu: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
     close: <><path d="m6 6 12 12M18 6 6 18" /></>,
     trash: <><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3" /></>,
@@ -22,6 +27,12 @@ function Icon({ name, className = '' }) {
     stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />,
   };
   return <svg className={className} viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
+}
+
+function ThemeToggle({ theme, onToggle, floating = false }) {
+  const nextTheme = theme === 'dark' ? 'light' : 'dark';
+  const label = `Chuyển sang giao diện ${nextTheme === 'dark' ? 'tối' : 'sáng'}`;
+  return <button className={`theme-toggle${floating ? ' is-floating' : ''}`} type="button" onClick={onToggle} aria-label={label} aria-pressed={theme === 'dark'} title={label}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>;
 }
 
 const CHAT_HISTORY_KEY = 'tro-ly-hoc-phi:chat-history:v1';
@@ -125,7 +136,7 @@ function AssistantAnswer({ message, index, latest, onRetry, onRegenerate, onFeed
   </div>;
 }
 
-function App() {
+function App({ user, onLogout, onNavigate, currentSection = 'chat', isStaff = false, theme, onToggleTheme }) {
   const [initialChatState] = useState(createInitialChatState);
   const [conversations, setConversations] = useState(initialChatState.conversations);
   const [activeConversationId, setActiveConversationId] = useState(initialChatState.activeId);
@@ -300,6 +311,7 @@ function App() {
   const historyGroups = ['Hôm nay', '7 ngày qua', 'Trước đó']
     .map((label) => ({ label, items: visibleConversations.filter((item) => historyGroupLabel(item.updatedAt) === label) }))
     .filter((group) => group.items.length > 0);
+  const userInitials = user?.fullName?.trim().split(/\s+/).slice(-2).map((part) => part[0]).join('').toLocaleUpperCase('vi') || 'SV';
 
   return <div className="app-shell">
     <header className="app-header">
@@ -308,13 +320,17 @@ function App() {
         <a className="brand" href="/" aria-label="Trợ lý học phí, trang chính"><span className="brand-mark"><Icon name="brand" /></span><span>Trợ lý học phí</span></a>
       </div>
       <div className="header-meta" aria-label="Có bốn tài liệu nguồn"><span className="status-dot" /><span>Tài liệu học phí · 4 nguồn</span></div>
+      <ThemeToggle theme={theme} onToggle={onToggleTheme} />
     </header>
     <div className={`layout${historyOpen ? ' is-history-open' : ''}`}>
       {historyOpen && <button className="history-backdrop" type="button" aria-label="Đóng lịch sử" onClick={() => setHistoryOpen(false)} />}
       <aside className="history-sidebar" aria-label="Lịch sử trò chuyện">
         <div className="history-sidebar-header">
-          <h2>Lịch sử trò chuyện</h2>
-          <button className="history-close-button" type="button" aria-label="Đóng lịch sử" onClick={() => setHistoryOpen(false)}><Icon name="close" /></button>
+          <a className="brand" href="/" aria-label="Trợ lý học phí, trang chính"><span className="brand-mark"><Icon name="brand" /></span><span>Trợ lý học phí</span></a>
+          <div className="sidebar-header-actions">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            <button className="history-close-button" type="button" aria-label="Đóng lịch sử" onClick={() => setHistoryOpen(false)}><Icon name="close" /></button>
+          </div>
         </div>
         <button className="new-chat-button" type="button" onClick={startNewConversation} disabled={pending}><Icon name="plus" /><span>Cuộc trò chuyện mới</span></button>
         <label className="history-search">
@@ -338,10 +354,27 @@ function App() {
             {normalizedQuery && <button className="history-clear-search" type="button" onClick={() => setHistoryQuery('')}>Xóa tìm kiếm</button>}
           </div>}
         </div>
-        <p className="history-storage-note">{historyLoaded ? 'Lịch sử được lưu an toàn trên máy chủ' : 'Đang tải lịch sử…'}</p>
+        <nav className="sidebar-nav" aria-label="Điều hướng">
+          <button className={currentSection === 'chat' ? 'is-active' : ''} type="button" aria-current={currentSection === 'chat' ? 'page' : undefined} onClick={() => onNavigate?.('chat')}><Icon name="messages" /><span>Trò chuyện</span></button>
+          <button className={currentSection === 'notices' ? 'is-active' : ''} type="button" aria-current={currentSection === 'notices' ? 'page' : undefined} onClick={() => onNavigate?.('notices')}><Icon name="bell" /><span>Thông báo</span></button>
+          <button className={currentSection === 'search' ? 'is-active' : ''} type="button" aria-current={currentSection === 'search' ? 'page' : undefined} onClick={() => onNavigate?.('search')}><Icon name="search" /><span>Tra cứu</span></button>
+          {isStaff && <button className={currentSection === 'workspace' ? 'is-active' : ''} type="button" aria-current={currentSection === 'workspace' ? 'page' : undefined} onClick={() => onNavigate?.('workspace')}><Icon name="document" /><span>Quản lý</span></button>}
+        </nav>
+        <div className="sidebar-footer">
+          <p className="history-storage-note">{historyLoaded ? 'Lịch sử được lưu an toàn trên máy chủ' : 'Đang tải lịch sử…'}</p>
+          <div className="sidebar-account">
+            <span className="account-avatar" aria-hidden="true">{userInitials}</span>
+            <span className="sidebar-account-name">{user?.fullName || 'Sinh viên'}</span>
+            <button className="sidebar-logout-button" type="button" aria-label="Đăng xuất" title="Đăng xuất" onClick={onLogout}><Icon name="logout" /></button>
+          </div>
+        </div>
       </aside>
       <section className="chat-column" aria-label="Trò chuyện với trợ lý học phí">
-        <div className="current-chat-heading"><span>{messages.length ? getConversationTitle(messages) : 'Cuộc trò chuyện mới'}</span><span className="current-chat-meta">Tài liệu học phí · 4 nguồn</span></div>
+        <div className="current-chat-heading">
+          <span className="desktop-chat-name">Trợ lý học phí</span>
+          <span className="mobile-chat-name">{messages.length ? getConversationTitle(messages) : 'Cuộc trò chuyện mới'}</span>
+          <span className="current-chat-meta">Tra cứu từ 4 tài liệu chính thức</span>
+        </div>
         <div id="conversation" className="thread" role="log" aria-live="polite" aria-relevant="additions text" ref={threadRef}>
           {messages.length === 0 ? <div className="starter-panel">
             <h1 className="starter-title">Xin chào, bạn muốn tìm hiểu gì?</h1>
@@ -363,9 +396,12 @@ function App() {
           <textarea id="message-input" name="message" rows="1" placeholder="Hỏi về học phí hoặc thời hạn" aria-describedby="composer-hint" ref={inputRef} value={input} onChange={onInput} onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (pending) abortRef.current?.abort(); else submitQuestion(input); }
           }} />
-          <button className={`send-button${pending ? ' is-pending' : ''}`} type="submit" aria-label={pending ? 'Dừng trả lời' : 'Gửi'} disabled={!input.trim() && !pending}>
-            <Icon name="send" className="send-icon" /><Icon name="stop" className="stop-icon" />
-          </button>
+          <div className="composer-footer">
+            <span className="composer-context"><Icon name="document" />Trả lời từ nguồn học phí chính thức</span>
+            <button className={`send-button${pending ? ' is-pending' : ''}`} type="submit" aria-label={pending ? 'Dừng trả lời' : 'Gửi'} disabled={!input.trim() && !pending}>
+              <Icon name="send" className="send-icon" /><Icon name="stop" className="stop-icon" />
+            </button>
+          </div>
         </form>
         <p id="composer-hint" className="sr-only">Nhấn Enter để gửi, Shift cộng Enter để xuống dòng.</p>
       </section>
@@ -373,7 +409,7 @@ function App() {
   </div>;
 }
 
-function SourceReader({ sourceId, documentId }) {
+function SourceReader({ sourceId, documentId, theme, onToggleTheme }) {
   const source = sources[sourceId];
   const [state, setState] = useState({ status: 'loading', html: '' });
   const [documentMeta, setDocumentMeta] = useState(null);
@@ -413,7 +449,7 @@ function SourceReader({ sourceId, documentId }) {
   return <div className="source-page">
     <header className="source-header">
       <a className="brand" href="/" aria-label="Quay lại Trợ lý học phí"><span className="brand-mark"><Icon name="brand" /></span><span>Trợ lý học phí</span></a>
-      <a className="source-back" href="/">Về cuộc trò chuyện</a>
+      <div className="source-header-actions"><ThemeToggle theme={theme} onToggle={onToggleTheme} /><a className="source-back" href="/">Về cuộc trò chuyện</a></div>
     </header>
     <main className="source-reader">
       <div className="source-reader-meta"><Icon name="document" /><span>{documentMeta?.name || source?.label}</span></div>
@@ -425,4 +461,4 @@ function SourceReader({ sourceId, documentId }) {
   </div>;
 }
 
-export { App, SourceReader };
+export { App, SourceReader, ThemeToggle };

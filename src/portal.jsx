@@ -1,17 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api } from './chat-api.js';
-import { App, SourceReader } from './main.jsx';
+import { App, SourceReader, ThemeToggle } from './main.jsx';
 import './styles.css';
 
-function AuthGate() {
+const THEME_STORAGE_KEY = 'tro-ly-hoc-phi:theme:v1';
+
+function useColorTheme() {
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; }
+    catch { return 'light'; }
+  });
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111214' : '#f4f4f6');
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme); }
+    catch { /* Keep the selected theme for this page even if storage is unavailable. */ }
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((current) => current === 'dark' ? 'light' : 'dark');
+  return { theme, toggleTheme };
+}
+
+function AuthGate({ theme, onToggleTheme }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [register, setRegister] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { api('/api/auth/me').then(setUser).catch(() => {}).finally(() => setReady(true)); }, []);
+  useEffect(() => { api('/api/auth/me').then((data) => setUser(data.user || data)).catch(() => {}).finally(() => setReady(true)); }, []);
 
   const submit = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
@@ -30,8 +49,8 @@ function AuthGate() {
     finally { setBusy(false); }
   };
 
-  if (!ready) return <main className="auth-screen"><p>Đang kết nối máy chủ…</p></main>;
-  if (!user) return <main className="auth-screen"><form className="auth-card" onSubmit={submit}>
+  if (!ready) return <main className="auth-screen"><ThemeToggle theme={theme} onToggle={onToggleTheme} floating /><p>Đang kết nối máy chủ…</p></main>;
+  if (!user) return <main className="auth-screen"><ThemeToggle theme={theme} onToggle={onToggleTheme} floating /><form className="auth-card" onSubmit={submit}>
     <div className="auth-brand"><span className="brand-mark">T</span><span>Trợ lý học phí</span></div>
     <p className="section-label">CỔNG THÔNG TIN SINH VIÊN</p><h1>{register ? 'Tạo tài khoản' : 'Đăng nhập'}</h1>
     <p className="auth-description">Tra cứu thông tin học phí chính thức và theo dõi các cuộc trò chuyện của bạn.</p>
@@ -42,7 +61,7 @@ function AuthGate() {
     <button className="primary-button" disabled={busy}>{busy ? 'Đang xử lý…' : register ? 'Tạo tài khoản sinh viên' : 'Đăng nhập'}</button>
     <button className="link-button" type="button" onClick={() => { setRegister(!register); setError(''); }}>{register ? 'Đã có tài khoản? Đăng nhập' : 'Sinh viên mới? Tạo tài khoản'}</button>
   </form></main>;
-  return <Portal user={user} onLogout={async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); setUser(null); }} />;
+  return <Portal user={user} theme={theme} onToggleTheme={onToggleTheme} onLogout={async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); setUser(null); }} />;
 }
 
 function Filters({ onChange }) {
@@ -106,15 +125,22 @@ function StaffWorkspace({ isAdmin }) {
   </section>;
 }
 
-function Portal({ user, onLogout }) {
+function Portal({ user, onLogout, theme, onToggleTheme }) {
   const [section, setSection] = useState('chat');
   const isStaff = ['staff', 'admin'].includes(user.role); const sourceId = new URLSearchParams(location.search).get('source'); const documentId = new URLSearchParams(location.search).get('document');
-  if (sourceId || documentId) return <SourceReader sourceId={sourceId} documentId={documentId} />;
-  return <div className="portal-shell"><header className="portal-header"><a className="brand" href="#chat" onClick={(e) => { e.preventDefault(); setSection('chat'); }}><span className="brand-mark">T</span><span>Trợ lý học phí</span></a><nav className="portal-nav"><button className={section === 'chat' ? 'active' : ''} onClick={() => setSection('chat')}>Trò chuyện</button><button className={section === 'notices' ? 'active' : ''} onClick={() => setSection('notices')}>Thông báo</button><button className={section === 'search' ? 'active' : ''} onClick={() => setSection('search')}>Tra cứu</button>{isStaff && <button className={section === 'workspace' ? 'active' : ''} onClick={() => setSection('workspace')}>Quản lý</button>}</nav><div className="account-area"><span>{user.fullName}</span><button className="link-button" onClick={onLogout}>Đăng xuất</button></div></header>
-    {section === 'chat' && <App key={user.id} />}{section === 'notices' && <Announcements />}{section === 'search' && <StudentSearch />}{section === 'workspace' && isStaff && <StaffWorkspace isAdmin={user.role === 'admin'} />}
+  if (sourceId || documentId) return <SourceReader sourceId={sourceId} documentId={documentId} theme={theme} onToggleTheme={onToggleTheme} />;
+  return <div className={`portal-shell${section === 'chat' ? ' is-chat' : ''}`}><header className="portal-header"><a className="brand" href="#chat" onClick={(e) => { e.preventDefault(); setSection('chat'); }}><span className="brand-mark">T</span><span>Trợ lý học phí</span></a><nav className="portal-nav"><button className={section === 'chat' ? 'active' : ''} onClick={() => setSection('chat')}>Trò chuyện</button><button className={section === 'notices' ? 'active' : ''} onClick={() => setSection('notices')}>Thông báo</button><button className={section === 'search' ? 'active' : ''} onClick={() => setSection('search')}>Tra cứu</button>{isStaff && <button className={section === 'workspace' ? 'active' : ''} onClick={() => setSection('workspace')}>Quản lý</button>}</nav><div className="account-area"><ThemeToggle theme={theme} onToggle={onToggleTheme} /><span>{user.fullName}</span><button className="link-button" onClick={onLogout}>Đăng xuất</button></div></header>
+    {section === 'chat' && <App key={user.id} user={user} onLogout={onLogout} onNavigate={setSection} currentSection={section} isStaff={isStaff} theme={theme} onToggleTheme={onToggleTheme} />}{section === 'notices' && <Announcements />}{section === 'search' && <StudentSearch />}{section === 'workspace' && isStaff && <StaffWorkspace isAdmin={user.role === 'admin'} />}
   </div>;
 }
 
-const sourceId = new URLSearchParams(location.search).get('source');
-if (sourceId) createRoot(document.getElementById('root')).render(<React.StrictMode><SourceReader sourceId={sourceId} /></React.StrictMode>);
-else createRoot(document.getElementById('root')).render(<React.StrictMode><AuthGate /></React.StrictMode>);
+function Root() {
+  const { theme, toggleTheme } = useColorTheme();
+  const params = new URLSearchParams(location.search);
+  const sourceId = params.get('source');
+  const documentId = params.get('document');
+  if (sourceId || documentId) return <SourceReader sourceId={sourceId} documentId={documentId} theme={theme} onToggleTheme={toggleTheme} />;
+  return <AuthGate theme={theme} onToggleTheme={toggleTheme} />;
+}
+
+createRoot(document.getElementById('root')).render(<React.StrictMode><Root /></React.StrictMode>);
